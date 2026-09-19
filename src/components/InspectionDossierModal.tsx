@@ -253,42 +253,35 @@ export const InspectionDossierModal: React.FC<InspectionDossierModalProps> = ({
         </div>
 
         {/* Modal Footer Actions */}
-        <div className="bg-[#f8f9ff] border-t border-[#dce9ff] px-6 py-4 flex flex-wrap items-center justify-end gap-3">
+        <div className="bg-[#f8f9ff] border-t border-[#dce9ff] px-6 py-4 flex flex-wrap items-center justify-between gap-3">
+          <button
+            onClick={onClose}
+            className="px-3.5 py-1.5 rounded-lg bg-white border border-[#c6c6cd] text-[#0b1c30] text-xs font-semibold hover:bg-[#eff4ff] transition-colors"
+          >
+            Close
+          </button>
+
           <div className="flex items-center gap-2">
             <button
               onClick={() => {
                 window.print();
               }}
-              className="px-4 py-2 rounded bg-white border border-[#c6c6cd] text-[#0b1c30] text-xs font-semibold hover:bg-[#eff4ff] transition-colors flex items-center gap-1.5"
+              className="px-4 py-2 rounded-lg bg-white border border-[#c6c6cd] text-[#0b1c30] text-xs font-semibold hover:bg-[#eff4ff] transition-colors flex items-center gap-1.5"
             >
               <span className="material-symbols-outlined text-[16px]">print</span>
-              <span>Print</span>
+              <span>Print Dossier</span>
             </button>
 
-            {!isCompliant ? (
-              <button
-                onClick={() => {
-                  setNoticeIssued(true);
-                  if (onSaveToLedger) onSaveToLedger(sample);
-                }}
-                disabled={noticeIssued}
-                className="px-4 py-2 rounded bg-[#ba1a1a] text-white text-xs font-semibold hover:opacity-90 transition-opacity flex items-center gap-1.5 shadow-sm disabled:opacity-50"
-              >
-                <span className="material-symbols-outlined text-[16px]">warning</span>
-                <span>{noticeIssued ? 'Notice Sent' : 'Issue Notice'}</span>
-              </button>
-            ) : (
-              <button
-                onClick={() => {
-                  if (onSaveToLedger) onSaveToLedger(sample);
-                  onClose();
-                }}
-                className="px-4 py-2 rounded bg-[#006a61] text-white text-xs font-semibold hover:opacity-90 transition-opacity flex items-center gap-1.5 shadow-sm"
-              >
-                <span className="material-symbols-outlined text-[16px]">task_alt</span>
-                <span>Approve & Save</span>
-              </button>
-            )}
+            <button
+              onClick={() => {
+                if (onSaveToLedger) onSaveToLedger(sample);
+                onClose();
+              }}
+              className="px-4 py-2 rounded-lg bg-[#006a61] text-white text-xs font-semibold hover:opacity-90 transition-opacity flex items-center gap-1.5 shadow-sm"
+            >
+              <span className="material-symbols-outlined text-[16px]">task_alt</span>
+              <span>Save to Ledger</span>
+            </button>
           </div>
         </div>
       </div>

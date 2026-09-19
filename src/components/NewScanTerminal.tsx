@@ -1,19 +1,143 @@
 import React, { useState, useRef } from 'react';
-import { SampleLabel, TerminalMode } from '../types';
-import { BENCHMARK_SAMPLES } from '../data/samples';
+import { SampleLabel, TerminalMode, VerifiedItem, VerifiedCheckDetail, Officer } from '../types';
 import { InspectionDossierModal } from './InspectionDossierModal';
 import { BatchTerminal } from './BatchTerminal';
 import { CalibrationLab } from './CalibrationLab';
+import { ManualSpecimenModal } from './ManualSpecimenModal';
+import { Language, translations } from '../utils/translations';
+
+export function createVerifiedItemFromSample(sample: SampleLabel, officer?: Officer): VerifiedItem {
+  const now = new Date();
+  const timeFormatted =
+    now.toLocaleDateString('en-IN', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    }) +
+    ', ' +
+    now.toLocaleTimeString('en-IN', {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: true,
+    });
+
+  const fontPassed = sample.measuredFontMm >= sample.requiredFontMm;
+  const uspPassed = sample.unitSalePrice.isMatch;
+  const dec = sample.declarations;
+
+  const verifiedChecks: VerifiedCheckDetail[] = [
+    {
+      ruleCode: 'Rule 6(1)(c) & Rule 9 Table 1',
+      checkName: 'Net Quantity Font Height',
+      result: fontPassed ? 'PASS' : 'FAIL',
+      measuredValue: `${sample.measuredFontMm.toFixed(2)} mm`,
+      statutoryRequirement: `≥ ${sample.requiredFontMm.toFixed(2)} mm (PDP: ${sample.pdpAreaCm2} cm²)`,
+      notes: fontPassed
+        ? 'Numerals comply with statutory minimum height requirements in Table 1.'
+        : 'Font height is below the statutory minimum threshold prescribed in Table 1.',
+    },
+    {
+      ruleCode: 'Rule 6(1)(s)',
+      checkName: 'Unit Sale Price (USP) Calculation',
+      result: uspPassed ? 'PASS' : 'FAIL',
+      measuredValue: `₹ ${sample.unitSalePrice.declared.toFixed(2)} / ${sample.unitSalePrice.unit}`,
+      statutoryRequirement: `₹ ${sample.unitSalePrice.calculated.toFixed(2)} / ${sample.unitSalePrice.unit}`,
+      notes: uspPassed
+        ? 'Calculated quotient matches declared unit sale price within 2 decimal places.'
+        : 'Discrepancy detected between declared unit sale price and computed quotient.',
+    },
+    {
+      ruleCode: 'Rule 6(1)(e) & Rule 18',
+      checkName: 'Maximum Retail Price (MRP) Declaration',
+      result: dec.mrpTaxesInclusive ? 'PASS' : 'FAIL',
+      measuredValue: `₹ ${sample.mrp.toFixed(2)} incl. of all taxes`,
+      statutoryRequirement: 'Must declare "incl. of all taxes" without price alteration',
+      notes: dec.mrpTaxesInclusive
+        ? 'Format conforms to Rule 6(1)(e); no smudging or dual pricing detected.'
+        : 'Missing mandatory tax inclusivity text or price alteration detected.',
+    },
+    {
+      ruleCode: 'Rule 6(1)(a) & (b)',
+      checkName: 'Manufacturer Details & Generic Name',
+      result: dec.manufacturerAddress ? 'PASS' : 'FAIL',
+      measuredValue: 'Complete postal address & PIN identified',
+      statutoryRequirement: 'Premises, City, State & 6-digit postal PIN code',
+      notes: dec.manufacturerAddress
+        ? 'Full manufacturer/packer identity verified.'
+        : 'Incomplete postal address or missing PIN code.',
+    },
+    {
+      ruleCode: 'Rule 6(1)(d)',
+      checkName: 'Date of Manufacture / Packaging',
+      result: dec.monthYearManufacture ? 'PASS' : 'FAIL',
+      measuredValue: 'Month & Year stamped clearly',
+      statutoryRequirement: 'Month and year of manufacture or pre-packaging',
+      notes: dec.monthYearManufacture
+        ? 'Temporal stamp legible and within validity.'
+        : 'Missing or illegible date of packing.',
+    },
+    {
+      ruleCode: 'Rule 6(1)(g)',
+      checkName: 'Consumer Care Helpline & Redressal',
+      result: dec.consumerCareHelpline ? 'PASS' : 'FAIL',
+      measuredValue: dec.consumerCareHelpline ? 'Name, Phone & Email verified' : 'Incomplete Contact Details',
+      statutoryRequirement: 'Designated contact name, telephone number and email',
+      notes: dec.consumerCareHelpline
+        ? 'Statutory consumer grievance cell verified.'
+        : 'Consumer helpline telephone or email missing from package.',
+    },
+    {
+      ruleCode: 'Rule 13',
+      checkName: 'Metric SI Standard Symbols',
+      result: 'PASS',
+      measuredValue: sample.netQtyDeclared,
+      statutoryRequirement: 'Standard singular symbols (g, kg, ml, l)',
+      notes: 'No forbidden plural symbols (e.g. gms, kgs, ltrs) detected.',
+    },
+  ];
+
+  return {
+    id: `VER-${Date.now().toString().slice(-6)}`,
+    sampleId: sample.id,
+    commodity: sample.commodity,
+    brand: sample.brand,
+    category: sample.category || 'General',
+    packageType: sample.packageType,
+    ean13: sample.ean13,
+    netQtyDeclared: sample.netQtyDeclared,
+    mrp: sample.mrp,
+    timestamp: now.toISOString(),
+    verifiedAtFormatted: timeFormatted,
+    status: sample.status,
+    pdpAreaCm2: sample.pdpAreaCm2,
+    measuredFontMm: sample.measuredFontMm,
+    requiredFontMm: sample.requiredFontMm,
+    verifiedChecks,
+    officerName: officer ? officer.name : 'Inspector 9921',
+    terminalId: officer ? officer.stationCode || officer.officerId : 'FEU-4-TOUGHPAD-01',
+  };
+}
 
 interface NewScanTerminalProps {
   onSaveToLedger?: (sample: SampleLabel) => void;
+  onItemVerified?: (item: VerifiedItem) => void;
+  lang?: Language;
+  currentOfficer?: Officer;
 }
 
-export const NewScanTerminal: React.FC<NewScanTerminalProps> = ({ onSaveToLedger }) => {
+export const NewScanTerminal: React.FC<NewScanTerminalProps> = ({
+  onSaveToLedger,
+  onItemVerified,
+  lang = 'EN',
+  currentOfficer,
+}) => {
+  const t = translations[lang];
   const [terminalMode, setTerminalMode] = useState<TerminalMode>('standard');
   const [selectedSample, setSelectedSample] = useState<SampleLabel | null>(null);
   const [isDossierOpen, setIsDossierOpen] = useState(false);
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
+  const [isManualModalOpen, setIsManualModalOpen] = useState(false);
 
   // Pipeline simulation state
   const [pipelineProgress, setPipelineProgress] = useState<number>(68.4);
@@ -54,6 +178,14 @@ export const NewScanTerminal: React.FC<NewScanTerminalProps> = ({ onSaveToLedger
       setCurrentStage(5);
       setIsAnalyzing(false);
       setIsDossierOpen(true);
+
+      if (onItemVerified) {
+        const verifiedItem = createVerifiedItemFromSample(sample, currentOfficer);
+        onItemVerified(verifiedItem);
+      }
+      if (onSaveToLedger) {
+        onSaveToLedger(sample);
+      }
     }, 1700);
 
     return () => {
@@ -114,6 +246,8 @@ export const NewScanTerminal: React.FC<NewScanTerminalProps> = ({ onSaveToLedger
     }
   };
 
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+
   const toggleFlash = () => {
     setTabletFlashOn(prev => !prev);
     setLuminanceState(prev => (prev === 'WARNING' ? 'NORMAL' : 'WARNING'));
@@ -152,7 +286,7 @@ export const NewScanTerminal: React.FC<NewScanTerminalProps> = ({ onSaveToLedger
             >
               document_scanner
             </span>
-            <span>Standard</span>
+            <span>{t.modeStandard}</span>
           </button>
           <button
             onClick={() => setTerminalMode('batch')}
@@ -163,7 +297,7 @@ export const NewScanTerminal: React.FC<NewScanTerminalProps> = ({ onSaveToLedger
             }`}
           >
             <span className="material-symbols-outlined text-[16px]">view_agenda</span>
-            <span>Batch</span>
+            <span>{t.modeBatch}</span>
           </button>
           <button
             onClick={() => setTerminalMode('calibration')}
@@ -174,14 +308,14 @@ export const NewScanTerminal: React.FC<NewScanTerminalProps> = ({ onSaveToLedger
             }`}
           >
             <span className="material-symbols-outlined text-[16px]">straighten</span>
-            <span>Calibration</span>
+            <span>{t.modeCalibration}</span>
           </button>
         </div>
       </div>
 
       {/* Render Alternate Modes if Selected */}
       {terminalMode === 'batch' && <BatchTerminal />}
-      {terminalMode === 'calibration' && <CalibrationLab />}
+      {terminalMode === 'calibration' && <CalibrationLab lang={lang} />}
 
       {/* Standard Terminal Content */}
       {terminalMode === 'standard' && (
@@ -230,84 +364,99 @@ export const NewScanTerminal: React.FC<NewScanTerminalProps> = ({ onSaveToLedger
                     <span>Browse Files</span>
                   </button>
                   <button
-                    onClick={() => {
-                      fileInputRef.current?.click();
-                    }}
+                    onClick={() => cameraInputRef.current?.click()}
                     className="px-3.5 py-1.5 rounded-lg bg-[#dce9ff] text-[#0b1c30] text-xs font-medium hover:bg-[#d3e4fe] transition-colors flex items-center gap-1.5"
                   >
                     <span className="material-symbols-outlined text-[16px] text-[#006a61]">photo_camera</span>
                     <span>Capture Camera</span>
                   </button>
+                  <button
+                    onClick={() => setIsManualModalOpen(true)}
+                    className="px-3.5 py-1.5 rounded-lg bg-[#006a61] text-white text-xs font-medium hover:opacity-90 transition-opacity flex items-center gap-1.5 shadow-xs"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">edit_note</span>
+                    <span>Feed Fresh Specimen</span>
+                  </button>
                 </div>
+
+                <input
+                  ref={cameraInputRef}
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  onChange={handleFileUpload}
+                  className="hidden"
+                />
               </div>
             </div>
 
-            {/* Benchmark Samples */}
-            <div className="lg:col-span-6 flex flex-col bg-[#ffffff] rounded-xl shadow-xs border border-[#dce9ff] p-4">
-              {/* Sample Cards Mosaic */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 flex-1">
-                {BENCHMARK_SAMPLES.map(sample => {
-                  const isInfraction = sample.status === 'INFRACTION';
-                  const isCompliant = sample.status === 'COMPLIANT';
-                  const isUsp = sample.status === 'USP_DISCREPANCY';
+            {/* Inspected Specimen or Blank State */}
+            <div className="lg:col-span-6 flex flex-col bg-[#ffffff] rounded-xl shadow-xs border border-[#dce9ff] p-5">
+              {selectedSample ? (
+                <div className="flex flex-col justify-between h-full space-y-4">
+                  <div>
+                    <div className="flex items-center justify-between pb-3 border-b border-[#eff4ff]">
+                      <span className="font-headline-sm text-sm font-bold text-[#0b1c30]">
+                        Active Specimen
+                      </span>
+                      <span
+                        className={`px-2 py-0.5 rounded text-[11px] font-semibold ${
+                          selectedSample.status === 'COMPLIANT'
+                            ? 'bg-[#86f2e4] text-[#00201d]'
+                            : 'bg-[#ffdad6] text-[#93000a]'
+                        }`}
+                      >
+                        {selectedSample.status === 'COMPLIANT' ? 'Compliant' : 'Infraction Detected'}
+                      </span>
+                    </div>
 
-                  return (
-                    <div
-                      key={sample.id}
-                      className="group relative flex flex-col justify-between p-3 rounded-lg bg-[#eff4ff] hover:bg-[#e5eeff] border border-[#dce9ff] transition-colors"
-                    >
-                      <div className="flex flex-col gap-1 mb-2">
-                        <div className="flex items-center justify-between">
-                          {isInfraction && (
-                            <span className="px-1.5 py-0.5 rounded bg-[#ffdad6] text-[#93000a] text-[10px] font-semibold">
-                              Infraction
-                            </span>
-                          )}
-                          {isCompliant && (
-                            <span className="px-1.5 py-0.5 rounded bg-[#86f2e4] text-[#00201d] text-[10px] font-semibold flex items-center gap-0.5">
-                              <span className="material-symbols-outlined text-[12px]">verified</span> Compliant
-                            </span>
-                          )}
-                          {isUsp && (
-                            <span className="px-1.5 py-0.5 rounded bg-[#ffdad6] text-[#93000a] text-[10px] font-semibold">
-                              USP Mismatch
-                            </span>
-                          )}
-                          <span className="text-[11px] text-[#45464d] font-mono">
-                            {sample.netQtyDeclared}
-                          </span>
-                        </div>
-
-                        <div className="font-headline-sm text-[13px] font-bold text-[#0b1c30]">
-                          {sample.commodity}
-                        </div>
-
-                        <div
-                          className={`text-[11px] flex items-start gap-1 leading-snug ${
-                            isCompliant ? 'text-[#006a61]' : 'text-[#ba1a1a]'
-                          }`}
-                        >
-                          <span className="material-symbols-outlined text-[13px] mt-0.5 shrink-0">
-                            {isCompliant ? 'check_circle' : isUsp ? 'calculate' : 'report_problem'}
-                          </span>
-                          <span className="line-clamp-2">{sample.infractionSummary}</span>
-                        </div>
+                    <div className="mt-3 space-y-2">
+                      <div className="text-base font-bold text-[#0b1c30]">
+                        {selectedSample.commodity}
                       </div>
-
-                      <div className="flex items-center justify-end pt-1 border-t border-[#dce9ff]/60">
-                        <button
-                          onClick={() => handleRunAnalysis(sample)}
-                          disabled={isAnalyzing}
-                          className="px-2.5 py-1 rounded bg-[#000000] text-[#ffffff] text-[11px] font-medium flex items-center gap-1 hover:opacity-85 transition-opacity disabled:opacity-50"
-                        >
-                          <span>{isAnalyzing && selectedSample?.id === sample.id ? 'Analyzing...' : 'Inspect'}</span>
-                          <span className="material-symbols-outlined text-[13px]">arrow_forward</span>
-                        </button>
+                      <div className="text-xs text-[#45464d] flex items-center gap-2">
+                        <span>Net Qty: <strong className="text-[#0b1c30]">{selectedSample.netQtyDeclared}</strong></span>
+                        <span>•</span>
+                        <span>MRP: <strong className="text-[#0b1c30]">₹{selectedSample.mrp.toFixed(2)}</strong></span>
+                      </div>
+                      <div className="p-3 rounded-lg bg-[#eff4ff] border border-[#dce9ff] text-xs text-[#0b1c30]">
+                        {selectedSample.infractionSummary}
                       </div>
                     </div>
-                  );
-                })}
-              </div>
+                  </div>
+
+                  <div className="flex items-center justify-between pt-3 border-t border-[#eff4ff]">
+                    <button
+                      onClick={() => {
+                        setSelectedSample(null);
+                        setUploadedFileName(null);
+                      }}
+                      className="px-3 py-1.5 rounded-lg border border-[#c6c6cd] text-xs text-[#45464d] hover:text-[#0b1c30] transition-colors"
+                    >
+                      Clear
+                    </button>
+                    <button
+                      onClick={() => setIsDossierOpen(true)}
+                      className="px-4 py-1.5 rounded-lg bg-[#000000] text-[#ffffff] text-xs font-medium hover:opacity-90 transition-opacity flex items-center gap-1.5"
+                    >
+                      <span className="material-symbols-outlined text-[16px]">visibility</span>
+                      <span>Open Dossier</span>
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex-1 min-h-[220px] flex flex-col items-center justify-center text-center p-6 rounded-lg border border-dashed border-[#dce9ff] bg-[#fafbff]">
+                  <div className="w-12 h-12 rounded-full bg-[#e5eeff] flex items-center justify-center mb-3 text-[#76777d]">
+                    <span className="material-symbols-outlined text-[24px]">inbox</span>
+                  </div>
+                  <div className="text-sm font-semibold text-[#0b1c30]">
+                    No Specimen Loaded
+                  </div>
+                  <p className="text-xs text-[#76777d] max-w-xs mt-1">
+                    Upload a package label file or use the camera to begin metrology inspection.
+                  </p>
+                </div>
+              )}
             </div>
           </div>
 
@@ -514,6 +663,19 @@ export const NewScanTerminal: React.FC<NewScanTerminalProps> = ({ onSaveToLedger
           sample={selectedSample}
           onClose={() => setIsDossierOpen(false)}
           onSaveToLedger={onSaveToLedger}
+        />
+      )}
+
+      {/* Manual Specimen Direct Entry Modal */}
+      {isManualModalOpen && (
+        <ManualSpecimenModal
+          isOpen={isManualModalOpen}
+          onClose={() => setIsManualModalOpen(false)}
+          onSubmit={(sample) => {
+            setUploadedFileName(sample.commodity);
+            handleRunAnalysis(sample);
+          }}
+          lang={lang}
         />
       )}
     </div>

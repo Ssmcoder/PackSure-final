@@ -1,4 +1,4 @@
-export type NavigationTab = 'new-scan' | 'dashboard' | 'history' | 'rule-reference' | 'audit-logs';
+export type NavigationTab = 'new-scan' | 'dashboard' | 'history' | 'rule-reference' | 'verified-items';
 
 export type TerminalMode = 'standard' | 'batch' | 'calibration';
 
@@ -21,6 +21,36 @@ export interface RuleViolation {
   description: string;
 }
 
+export interface VerifiedCheckDetail {
+  ruleCode: string;
+  checkName: string;
+  result: 'PASS' | 'FAIL' | 'WARNING';
+  measuredValue: string;
+  statutoryRequirement: string;
+  notes: string;
+}
+
+export interface VerifiedItem {
+  id: string;
+  sampleId: string;
+  commodity: string;
+  brand: string;
+  category?: string;
+  packageType: string;
+  ean13: string;
+  netQtyDeclared: string;
+  mrp: number;
+  timestamp: string;
+  verifiedAtFormatted: string;
+  status: 'COMPLIANT' | 'INFRACTION' | 'USP_DISCREPANCY';
+  pdpAreaCm2: number;
+  measuredFontMm: number;
+  requiredFontMm: number;
+  verifiedChecks: VerifiedCheckDetail[];
+  officerName: string;
+  terminalId: string;
+}
+
 export interface SampleLabel {
   id: string;
   brand: string;
@@ -28,7 +58,7 @@ export interface SampleLabel {
   netQtyDeclared: string;
   ean13: string;
   packageType: string;
-  category: 'Oil' | 'Dairy' | 'Grains' | 'Snacks' | 'Beverages';
+  category: 'Oil' | 'Dairy' | 'Grains' | 'Snacks' | 'Beverages' | string;
   status: 'INFRACTION' | 'COMPLIANT' | 'USP_DISCREPANCY';
   infractionSummary: string;
   ruleCode: string;
@@ -76,4 +106,15 @@ export interface AuditRecord {
   ruleViolationsCount: number;
   sha256Hash: string;
   isoStandard: string;
+}
+
+export interface Officer {
+  id: string;
+  officerId: string; // Specific ID of Department of Legal Metrology Officer
+  name: string;
+  designation: string;
+  zone: string;
+  stationCode: string;
+  password?: string;
+  registeredAt?: string;
 }
