@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { SampleLabel, RuleViolation } from '../types';
 import { Language } from '../utils/translations';
+import { createSpecimenSvgDataUrl } from '../utils/specimenImages';
 
 interface ManualSpecimenModalProps {
   isOpen: boolean;
@@ -124,10 +125,21 @@ export const ManualSpecimenModal: React.FC<ManualSpecimenModalProps> = ({
       infractionSummary = 'Rule 6(1): Omission of mandatory statutory declarations on package.';
     }
 
+    const generatedImageUrl = createSpecimenSvgDataUrl(
+      brand.trim(),
+      commodity.trim(),
+      netQtyDeclared.trim(),
+      Number(mrp) || 0,
+      `${declaredUsp} ${uspUnit}`,
+      ean13.trim() || '8901234567890',
+      isFontPass && isUspMatch ? '#006a61' : '#ba1a1a'
+    );
+
     const sample: SampleLabel = {
       id: `specimen-${Date.now()}`,
       brand: brand.trim(),
       commodity: commodity.trim(),
+      imageUrl: generatedImageUrl,
       netQtyDeclared: netQtyDeclared.trim(),
       ean13: ean13.trim() || '890' + Math.floor(1000000000 + Math.random() * 9000000000),
       packageType,

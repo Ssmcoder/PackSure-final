@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Language, translations } from '../utils/translations';
 import { Officer } from '../types';
+import { packsureApi, getBackendBaseUrl, setBackendBaseUrl } from '../utils/api';
 
 interface HeaderProps {
   lang: Language;
@@ -23,12 +24,42 @@ export const Header: React.FC<HeaderProps> = ({
   onLogout,
 }) => {
   const [showOfficerMenu, setShowOfficerMenu] = useState(false);
-  const [apiStatus, setApiStatus] = useState<'connected' | 'reconnecting'>('connected');
+  const [showApiModal, setShowApiModal] = useState(false);
+  const [apiStatus, setApiStatus] = useState<'connected' | 'checking' | 'offline'>('checking');
+  const [backendUrl, setBackendUrlInput] = useState(getBackendBaseUrl);
+  const [modelStatus, setModelStatus] = useState<Record<string, any> | null>(null);
+  const [healthError, setHealthError] = useState<string | null>(null);
 
   const t = translations[lang];
 
-  const toggleStatus = () => {
-    setApiStatus(prev => (prev === 'connected' ? 'reconnecting' : 'connected'));
+  const verifyBackend = async () => {
+    setApiStatus('checking');
+    setHealthError(null);
+    try {
+      const res = await packsureApi.checkHealth();
+      if (res.status === 'ok') {
+        setApiStatus('connected');
+        setModelStatus(res.models || {});
+      } else {
+        setApiStatus('offline');
+        setHealthError('Invalid response from server');
+      }
+    } catch (err: any) {
+      setApiStatus('offline');
+      setHealthError(err?.message || 'Could not connect to backend server');
+    }
+  };
+
+  useEffect(() => {
+    verifyBackend();
+    const interval = setInterval(verifyBackend, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleSaveApiUrl = (e: React.FormEvent) => {
+    e.preventDefault();
+    setBackendBaseUrl(backendUrl);
+    verifyBackend();
   };
 
   const getInitials = (name?: string) => {
@@ -59,98 +90,102 @@ export const Header: React.FC<HeaderProps> = ({
           <span className="hidden sm:inline">{t.ministryName}</span>
         </div>
 
-        {/* Top Tablist: Helpline, Zoom Controls, Language Toggle */}
-        <div className="flex items-center gap-3 sm:gap-4">
-          <div className="hidden md:flex items-center gap-1.5 font-medium text-[#006a61]">
-            <span className="material-symbols-outlined text-[14px]">call</span>
-            <span>{t.nchHelpline}</span>
-          </div>
-
-          {/* Functional Text Zoom Buttons (A-, A, A+) */}
-          <div
-            className="flex items-center gap-1 text-[11px] font-mono border border-[#c6c6cd] rounded px-1.5 py-0.5 bg-white shadow-xs"
-            title="Adjust interface font size"
+        {/* Top Right Utilities: Backend status, Font Zoom & Language */}
+        <div className="flex items-center gap-3">
+          {/* Backend Status indicator button */}
+          <button
+            onClick={() => setShowApiModal(true)}
+            title="FastAPI Backend Status & Settings"
+            className="flex items-center gap-1.5 px-2 py-0.5 rounded-sm bg-white border border-[#dce9ff] hover:bg-[#e5eeff] transition-colors text-[10px]"
           >
+            <span
+              className={`w-2 h-2 rounded-full ${
+                apiStatus === 'connected'
+                  ? 'bg-[#006a61] animate-pulse'
+                  : apiStatus === 'checking'
+                  ? 'bg-[#f59e0b]'
+                  : 'bg-[#ba1a1a]'
+              }`}
+            ></span>
+            <span className="font-mono text-[#0b1c30]">
+              {apiStatus === 'connected' ? 'API: Online' : apiStatus === 'checking' ? 'API: Checking...' : 'API: Standby'}
+            </span>
+          </button>
+
+          {/* Text Zoom Controls */}
+          <div className="flex items-center bg-white border border-[#dce9ff] rounded px-1 py-0.5 gap-1">
+            <span className="text-[10px] text-[#76777d] px-1 font-mono">Text:</span>
             <button
               onClick={() => onFontZoomChange('small')}
-              className={`px-1.5 py-0.5 rounded transition-colors ${
-                fontZoom === 'small'
-                  ? 'bg-[#131b2e] text-white font-bold'
-                  : 'hover:text-[#0b1c30] text-[#45464d]'
+              className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                fontZoom === 'small' ? 'bg-[#0b1c30] text-white' : 'text-[#45464d] hover:bg-[#f0f4fa]'
               }`}
-              title="Decrease Font Size"
+              title="Small font size"
             >
               A-
             </button>
-            <span className="text-[#c6c6cd]">|</span>
             <button
               onClick={() => onFontZoomChange('normal')}
-              className={`px-1.5 py-0.5 rounded transition-colors ${
-                fontZoom === 'normal'
-                  ? 'bg-[#131b2e] text-white font-bold'
-                  : 'hover:text-[#0b1c30] text-[#45464d]'
+              className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                fontZoom === 'normal' ? 'bg-[#0b1c30] text-white' : 'text-[#45464d] hover:bg-[#f0f4fa]'
               }`}
-              title="Default Font Size"
+              title="Default font size"
             >
               A
             </button>
-            <span className="text-[#c6c6cd]">|</span>
             <button
               onClick={() => onFontZoomChange('large')}
-              className={`px-1.5 py-0.5 rounded transition-colors ${
-                fontZoom === 'large'
-                  ? 'bg-[#131b2e] text-white font-bold'
-                  : 'hover:text-[#0b1c30] text-[#45464d]'
+              className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                fontZoom === 'large' ? 'bg-[#0b1c30] text-white' : 'text-[#45464d] hover:bg-[#f0f4fa]'
               }`}
-              title="Increase Font Size"
+              title="Large font size"
             >
               A+
             </button>
           </div>
 
-          {/* Functional Language Translation Toggle */}
-          <button
-            onClick={() => onLanguageChange(lang === 'EN' ? 'HI' : 'EN')}
-            className="px-2.5 py-0.5 rounded bg-white border border-[#c6c6cd] font-semibold text-[11px] text-[#0b1c30] hover:bg-[#eff4ff] shadow-xs flex items-center gap-1 transition-colors"
-            title="Translate interface between English and Hindi"
-          >
-            <span className="material-symbols-outlined text-[13px] text-[#006a61]">
-              translate
-            </span>
-            <span>{lang === 'EN' ? 'हिन्दी' : 'English'}</span>
-          </button>
+          {/* Language Selector */}
+          <div className="flex items-center gap-1 bg-white border border-[#dce9ff] rounded px-1 py-0.5">
+            <button
+              onClick={() => onLanguageChange('EN')}
+              className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                lang === 'EN' ? 'bg-[#006a61] text-white' : 'text-[#45464d] hover:bg-[#f0f4fa]'
+              }`}
+            >
+              English
+            </button>
+            <button
+              onClick={() => onLanguageChange('HI')}
+              className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                lang === 'HI' ? 'bg-[#006a61] text-white' : 'text-[#45464d] hover:bg-[#f0f4fa]'
+              }`}
+            >
+              हिन्दी
+            </button>
+          </div>
         </div>
       </div>
 
       {/* Main Header Bar: Official Emblem + PackSure Logo & Product Identity */}
-      <div className="w-full px-4 lg:px-8 h-16 flex items-center justify-between">
-        <div className="flex items-center gap-3.5">
-          {/* State Emblem of India */}
-          <div className="w-9 h-11 flex items-center justify-center shrink-0">
-            <svg viewBox="0 0 100 120" className="w-8 h-10 text-[#0b1c30] fill-current" aria-label="State Emblem of India">
-              <circle cx="50" cy="22" r="14" fill="none" stroke="currentColor" strokeWidth="4" />
-              <path d="M38 18 C38 12, 44 8, 50 8 C56 8, 62 12, 62 18 Z" />
-              <circle cx="50" cy="18" r="3" fill="currentColor" />
-              <circle cx="34" cy="24" r="7" fill="none" stroke="currentColor" strokeWidth="3" />
-              <circle cx="66" cy="24" r="7" fill="none" stroke="currentColor" strokeWidth="3" />
-              <rect x="24" y="38" width="52" height="12" rx="3" fill="none" stroke="currentColor" strokeWidth="3.5" />
-              <circle cx="50" cy="44" r="4.5" fill="none" stroke="currentColor" strokeWidth="2" />
-              <path d="M28 50 C32 64, 40 72, 50 72 C60 72, 68 64, 72 50 Z" fill="none" stroke="currentColor" strokeWidth="3.5" />
-              <path d="M38 50 C40 60, 45 66, 50 66 C55 66, 60 60, 62 50" fill="none" stroke="currentColor" strokeWidth="2" />
-              <rect x="22" y="74" width="56" height="6" rx="1.5" />
-              <text x="50" y="94" textAnchor="middle" fontSize="10.5" fontWeight="bold" fontFamily="sans-serif" fill="currentColor">
-                सत्यमेव जयते
-              </text>
-            </svg>
+      <div className="px-4 lg:px-8 py-2.5 flex items-center justify-between">
+        {/* Left: Emblem & App Title */}
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-full bg-[#eff4ff] border border-[#dce9ff] flex items-center justify-center p-1 shadow-xs">
+            <img
+              src="https://upload.wikimedia.org/wikipedia/commons/5/55/Emblem_of_India.svg"
+              alt="National Emblem of India"
+              className="h-7 w-auto object-contain"
+              referrerPolicy="no-referrer"
+            />
           </div>
 
-          <div className="border-l border-[#dce9ff] pl-3 flex flex-col justify-center">
-            <span className="font-bold text-xs sm:text-sm text-[#0b1c30] tracking-tight">
+          <div className="flex flex-col">
+            <span className="font-extrabold text-sm sm:text-base text-[#0b1c30] tracking-tight leading-tight">
               {t.deptName}
             </span>
             <div className="text-[11px] text-[#45464d] flex items-center gap-2">
               <span className="font-semibold text-[#006a61]">{t.divisionName}</span>
-              <span className="hidden md:inline text-[#c6c6cd]">•</span>
+              <span className="hidden md:inline text-[#c6c6cd]">|</span>
               <span className="hidden md:inline font-mono text-[10px] px-1.5 py-0.2 bg-[#eff4ff] border border-[#dce9ff] rounded text-[#0b1c30]">
                 {t.portalSubtitle}
               </span>
@@ -165,14 +200,9 @@ export const Header: React.FC<HeaderProps> = ({
               </span>
             </div>
             <div className="flex flex-col">
-              <div className="flex items-center gap-1">
-                <span className="font-black text-sm sm:text-base text-[#0b1c30] tracking-tight font-sans">
-                  PackSure
-                </span>
-                <span className="text-[9px] font-bold text-[#006a61] bg-[#86f2e4]/40 px-1 rounded">
-                  PRO
-                </span>
-              </div>
+              <span className="font-black text-sm sm:text-base text-[#0b1c30] tracking-tight font-sans">
+                PackSure
+              </span>
               <span className="text-[10px] text-[#76777d] leading-none">
                 {t.productTagline}
               </span>
@@ -183,8 +213,8 @@ export const Header: React.FC<HeaderProps> = ({
         {/* Right: Portal Gateway Status & Officer Identity */}
         <div className="flex items-center gap-3 sm:gap-4">
           <div
-            onClick={toggleStatus}
-            title="Click to toggle gateway connectivity status"
+            onClick={() => setShowApiModal(true)}
+            title="Click to view Backend Gateway Configuration"
             className="hidden lg:flex items-center gap-2 px-3 py-1 rounded bg-[#eff4ff] border border-[#dce9ff] cursor-pointer hover:bg-[#e5eeff] transition-colors"
           >
             <span
@@ -193,7 +223,7 @@ export const Header: React.FC<HeaderProps> = ({
               }`}
             ></span>
             <span className="text-[11px] font-medium text-[#0b1c30]">
-              {apiStatus === 'connected' ? t.gatewayActive : 'Offline / Standby'}
+              {apiStatus === 'connected' ? 'FastAPI Gateway Active' : 'Offline / Standby Engine'}
             </span>
           </div>
 
@@ -242,8 +272,10 @@ export const Header: React.FC<HeaderProps> = ({
                     </span>
                   </div>
                   <div className="flex justify-between">
-                    <span>Certified Calibration:</span>
-                    <span className="text-[#006a61] font-semibold">Valid till Dec 2026</span>
+                    <span>Backend Server Sync:</span>
+                    <span className={apiStatus === 'connected' ? 'text-[#006a61] font-semibold' : 'text-[#ba1a1a] font-semibold'}>
+                      {apiStatus === 'connected' ? 'Synchronized' : 'Local Storage Mode'}
+                    </span>
                   </div>
                 </div>
                 <div className="px-3 pt-2.5 pb-1 border-t border-[#eff4ff] space-y-1.5">
@@ -298,6 +330,117 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Backend API Configuration & Health Modal */}
+      {showApiModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-fade-in">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-[#dce9ff] space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-[#eff4ff]">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-[#006a61]/10 text-[#006a61] flex items-center justify-center font-bold">
+                  <span className="material-symbols-outlined text-[20px]">dns</span>
+                </div>
+                <div>
+                  <h3 className="font-bold text-[#0b1c30] text-base">PackSure Backend Gateway</h3>
+                  <p className="text-xs text-[#76777d]">FastAPI Python Microservice Connection</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowApiModal(false)}
+                className="text-[#76777d] hover:text-[#0b1c30] p-1 rounded-lg hover:bg-[#f0f4fa]"
+              >
+                <span className="material-symbols-outlined text-[20px]">close</span>
+              </button>
+            </div>
+
+            {/* Current Status Box */}
+            <div className={`p-3 rounded-xl border flex items-center justify-between ${
+              apiStatus === 'connected' ? 'bg-[#e6f4ea] border-[#34a853]/40' : 'bg-[#fef7e0] border-[#fbbc04]/40'
+            }`}>
+              <div className="flex items-center gap-3">
+                <span className={`w-3 h-3 rounded-full ${apiStatus === 'connected' ? 'bg-[#34a853]' : 'bg-[#fbbc04]'}`} />
+                <div>
+                  <div className="font-bold text-xs text-[#0b1c30]">
+                    {apiStatus === 'connected' ? 'Connected to PackSure Backend' : 'Running in Local Standby Mode'}
+                  </div>
+                  <div className="text-[11px] text-[#45464d] font-mono">
+                    {healthError ? `Notice: ${healthError}` : 'All REST endpoints (/scans, /auth, /stats) functional'}
+                  </div>
+                </div>
+              </div>
+              <button
+                onClick={verifyBackend}
+                className="px-3 py-1 bg-white rounded-lg border border-[#dce9ff] text-xs font-semibold hover:bg-[#f8f9ff] text-[#0b1c30]"
+              >
+                Re-check
+              </button>
+            </div>
+
+            {/* Backend URL Input Form */}
+            <form onSubmit={handleSaveApiUrl} className="space-y-3">
+              <div>
+                <label className="block text-xs font-semibold text-[#0b1c30] mb-1">
+                  Backend API Base URL:
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="url"
+                    value={backendUrl}
+                    onChange={e => setBackendUrlInput(e.target.value)}
+                    placeholder="http://localhost:8000"
+                    className="flex-1 px-3 py-2 text-xs border border-[#c6c6cd] rounded-lg font-mono focus:outline-none focus:border-[#006a61]"
+                    required
+                  />
+                  <button
+                    type="submit"
+                    className="px-4 py-2 bg-[#006a61] text-white rounded-lg text-xs font-semibold hover:bg-[#005049]"
+                  >
+                    Save & Test
+                  </button>
+                </div>
+                <p className="text-[10px] text-[#76777d] mt-1">
+                  Default: <span className="font-mono">http://localhost:8000</span> (FastAPI backend server)
+                </p>
+              </div>
+            </form>
+
+            {/* Microservice Endpoints Specification */}
+            <div className="border border-[#eff4ff] rounded-xl p-3 bg-[#f8f9ff] space-y-2 text-[11px]">
+              <div className="font-bold text-[#0b1c30] flex items-center gap-1.5">
+                <span className="material-symbols-outlined text-[14px] text-[#006a61]">hub</span>
+                <span>Active Backend API Specifications</span>
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-[10px] font-mono">
+                <div className="p-1.5 bg-white rounded border border-[#dce9ff]">
+                  <span className="text-[#006a61] font-bold">POST</span> /scans/run
+                  <p className="text-[#76777d] text-[9px] font-sans">AI OCR & Metrology Rule Pipeline</p>
+                </div>
+                <div className="p-1.5 bg-white rounded border border-[#dce9ff]">
+                  <span className="text-[#138808] font-bold">GET</span> /scans/:id/report
+                  <p className="text-[#76777d] text-[9px] font-sans">Official PDF Report Generator</p>
+                </div>
+                <div className="p-1.5 bg-white rounded border border-[#dce9ff]">
+                  <span className="text-[#006a61] font-bold">POST</span> /auth/login
+                  <p className="text-[#76777d] text-[9px] font-sans">JWT Officer Authentication</p>
+                </div>
+                <div className="p-1.5 bg-white rounded border border-[#dce9ff]">
+                  <span className="text-[#138808] font-bold">GET</span> /stats
+                  <p className="text-[#76777d] text-[9px] font-sans">Live Aggregated Enforcement Analytics</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end pt-2">
+              <button
+                onClick={() => setShowApiModal(false)}
+                className="px-4 py-2 bg-[#0b1c30] text-white text-xs font-semibold rounded-lg hover:bg-[#131b2e]"
+              >
+                Close Gateway Panel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </header>
   );
 };

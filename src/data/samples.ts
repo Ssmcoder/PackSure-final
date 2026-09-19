@@ -1,10 +1,12 @@
 import { SampleLabel, AuditRecord } from '../types';
+import { SAMPLE_SPECIMEN_IMAGES } from '../utils/specimenImages';
 
 export const BENCHMARK_SAMPLES: SampleLabel[] = [
   {
     id: 'sample-1',
     brand: 'NutriGold',
     commodity: 'NutriGold Sunflower Oil',
+    imageUrl: SAMPLE_SPECIMEN_IMAGES['sample-1'],
     netQtyDeclared: '1000 mL (1L)',
     ean13: '8901030491023',
     packageType: 'PET Bottle (1L Refined)',
@@ -47,6 +49,7 @@ export const BENCHMARK_SAMPLES: SampleLabel[] = [
     id: 'sample-2',
     brand: 'DairyPure',
     commodity: 'DairyPure Full Cream Milk',
+    imageUrl: SAMPLE_SPECIMEN_IMAGES['sample-2'],
     netQtyDeclared: '500 mL Pouch',
     ean13: '8901262018241',
     packageType: 'Flexible Co-Ex Poly Pouch',
@@ -79,6 +82,7 @@ export const BENCHMARK_SAMPLES: SampleLabel[] = [
     id: 'sample-3',
     brand: 'Heritage',
     commodity: 'Heritage Basmati Rice',
+    imageUrl: SAMPLE_SPECIMEN_IMAGES['sample-3'],
     netQtyDeclared: '5.00 kg Pack',
     ean13: '8901502409180',
     packageType: 'Woven Polypropylene Bag',
@@ -121,6 +125,7 @@ export const BENCHMARK_SAMPLES: SampleLabel[] = [
     id: 'sample-4',
     brand: 'SnackBurst',
     commodity: 'SnackBurst Salted Chips',
+    imageUrl: SAMPLE_SPECIMEN_IMAGES['sample-4'],
     netQtyDeclared: '85 g Bag',
     ean13: '8901725330198',
     packageType: 'Nitrogen Flushed Foil Pouch',

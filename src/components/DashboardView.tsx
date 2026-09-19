@@ -1,6 +1,7 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { NavigationTab, VerifiedItem, SampleLabel } from '../types';
 import { Language } from '../utils/translations';
+import { packsureApi, BackendStats } from '../utils/api';
 
 interface DashboardViewProps {
   onNavigate: (tab: NavigationTab) => void;
@@ -17,6 +18,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 }) => {
   const [timeRange, setTimeRange] = useState<'ALL' | '7D' | '30D'>('ALL');
   const [categoryFilter, setCategoryFilter] = useState<string>('ALL');
+  const [backendStats, setBackendStats] = useState<BackendStats | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+    packsureApi.getStats().then(stats => {
+      if (mounted) setBackendStats(stats);
+    }).catch(() => {
+      // Backend offline, fallback to local data
+    });
+    return () => { mounted = false; };
+  }, [items.length]);
 
   // Available categories
   const availableCategories = useMemo(() => {

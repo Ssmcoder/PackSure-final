@@ -184,3 +184,23 @@
   direction: ltr;
   vertical-align: middle;
 }
+
+@keyframes laserScan {
+  0% {
+    top: 4%;
+    opacity: 0.8;
+  }
+  50% {
+    top: 94%;
+    opacity: 1;
+  }
+  100% {
+    top: 4%;
+    opacity: 0.8;
+  }
+}
+
+.animate-laser-scan {
+  animation: laserScan 2.4s ease-in-out infinite;
+}
+

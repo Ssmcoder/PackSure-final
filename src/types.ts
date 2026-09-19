@@ -83,6 +83,8 @@ export interface SampleLabel {
     consumerCareHelpline: boolean;
   };
   violations: RuleViolation[];
+  backendReport?: any;
+  savedScanId?: string;
 }
 
 export interface PipelineStageState {

@@ -1,10 +1,12 @@
 import React, { useState, useRef } from 'react';
 import { SampleLabel, TerminalMode, VerifiedItem, VerifiedCheckDetail, Officer } from '../types';
+import { BENCHMARK_SAMPLES } from '../data/samples';
 import { InspectionDossierModal } from './InspectionDossierModal';
 import { BatchTerminal } from './BatchTerminal';
 import { CalibrationLab } from './CalibrationLab';
 import { ManualSpecimenModal } from './ManualSpecimenModal';
 import { Language, translations } from '../utils/translations';
+import { packsureApi, convertBackendReportToSampleLabel } from '../utils/api';
 
 export function createVerifiedItemFromSample(sample: SampleLabel, officer?: Officer): VerifiedItem {
   const now = new Date();
@@ -137,6 +139,12 @@ export const NewScanTerminal: React.FC<NewScanTerminalProps> = ({
   const [selectedSample, setSelectedSample] = useState<SampleLabel | null>(null);
   const [isDossierOpen, setIsDossierOpen] = useState(false);
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
+  const [uploadedImageUrl, setUploadedImageUrl] = useState<string | null>(null);
+  const [uploadedImageMeta, setUploadedImageMeta] = useState<{
+    name: string;
+    size: string;
+    type: string;
+  } | null>(null);
   const [isManualModalOpen, setIsManualModalOpen] = useState(false);
 
   // Pipeline simulation state
@@ -144,67 +152,123 @@ export const NewScanTerminal: React.FC<NewScanTerminalProps> = ({
   const [currentStage, setCurrentStage] = useState<number>(4);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
 
-  // Quality gate test states
-  const [blurState, setBlurState] = useState<'REJECTED' | 'PASSED'>('REJECTED');
-  const [luminanceState, setLuminanceState] = useState<'WARNING' | 'NORMAL'>('WARNING');
-  const [tabletFlashOn, setTabletFlashOn] = useState(false);
-
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
 
-  // Trigger analysis for a sample
-  const handleRunAnalysis = (sample: SampleLabel) => {
+  // Clear current specimen and loaded image
+  const handleClearSpecimen = () => {
+    setSelectedSample(null);
+    setUploadedFileName(null);
+    setUploadedImageUrl(null);
+    setUploadedImageMeta(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    if (cameraInputRef.current) cameraInputRef.current.value = '';
+  };
+
+  // Trigger analysis for a sample via FastAPI backend with fallback
+  const handleRunAnalysis = async (sample: SampleLabel) => {
     setSelectedSample(sample);
+    if (sample.imageUrl) {
+      setUploadedImageUrl(sample.imageUrl);
+    }
     setIsAnalyzing(true);
     setPipelineProgress(20);
     setCurrentStage(1);
 
     const step1 = setTimeout(() => {
-      setPipelineProgress(40);
+      setPipelineProgress(45);
       setCurrentStage(2);
-    }, 400);
+    }, 350);
 
     const step2 = setTimeout(() => {
-      setPipelineProgress(65);
+      setPipelineProgress(70);
       setCurrentStage(3);
-    }, 800);
+    }, 700);
 
-    const step3 = setTimeout(() => {
-      setPipelineProgress(85);
-      setCurrentStage(4);
-    }, 1200);
+    let finalSample: SampleLabel = sample;
 
-    const step4 = setTimeout(() => {
-      setPipelineProgress(100);
-      setCurrentStage(5);
-      setIsAnalyzing(false);
-      setIsDossierOpen(true);
-
-      if (onItemVerified) {
-        const verifiedItem = createVerifiedItemFromSample(sample, currentOfficer);
-        onItemVerified(verifiedItem);
+    try {
+      let backendReport: any = null;
+      if (sample.id.startsWith('sample-0') || sample.id === 'sample-01' || sample.id === 'sample-02' || sample.id === 'sample-03') {
+        // Run pre-packaged benchmark sample in backend
+        try {
+          const runRes = await packsureApi.runSample(sample.id);
+          backendReport = runRes.report;
+        } catch {
+          // If sample not registered, run via image or direct
+          if (sample.imageUrl) {
+            const scanRes = await packsureApi.runScan(sample.commodity, sample.imageUrl);
+            backendReport = scanRes.report;
+          }
+        }
+      } else if (sample.imageUrl) {
+        const scanRes = await packsureApi.runScan(sample.commodity, sample.imageUrl);
+        backendReport = scanRes.report;
       }
-      if (onSaveToLedger) {
-        onSaveToLedger(sample);
-      }
-    }, 1700);
 
-    return () => {
+      if (backendReport) {
+        const converted = convertBackendReportToSampleLabel(backendReport, sample.imageUrl || '', sample.commodity, sample.id);
+        finalSample = { ...converted, id: sample.id };
+        
+        // Auto persist scan to backend database
+        try {
+          const savedResult = await packsureApi.saveScan(sample.commodity, sample.imageUrl || '', backendReport);
+          finalSample.savedScanId = savedResult.id;
+        } catch {
+          // Non-blocking database save
+        }
+      }
+    } catch (err) {
+      console.warn('Backend scan pipeline unavailable, fallback to local analysis:', err);
+    } finally {
       clearTimeout(step1);
       clearTimeout(step2);
-      clearTimeout(step3);
-      clearTimeout(step4);
-    };
+
+      setPipelineProgress(90);
+      setCurrentStage(4);
+
+      setTimeout(() => {
+        setPipelineProgress(100);
+        setCurrentStage(5);
+        setIsAnalyzing(false);
+        setSelectedSample(finalSample);
+        setIsDossierOpen(true);
+
+        if (onItemVerified) {
+          const verifiedItem = createVerifiedItemFromSample(finalSample, currentOfficer);
+          onItemVerified(verifiedItem);
+        }
+        if (onSaveToLedger) {
+          onSaveToLedger(finalSample);
+        }
+      }, 500);
+    }
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      setUploadedFileName(file.name);
-      // Construct an active sample from uploaded image
+  const processFile = (file: File) => {
+    setUploadedFileName(file.name);
+    const sizeFormatted =
+      file.size > 1024 * 1024
+        ? `${(file.size / (1024 * 1024)).toFixed(1)} MB`
+        : `${Math.round(file.size / 1024)} KB`;
+
+    setUploadedImageMeta({
+      name: file.name,
+      size: sizeFormatted,
+      type: file.type || 'image',
+    });
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const dataUrl = (event.target?.result as string) || '';
+      setUploadedImageUrl(dataUrl);
+
+      // Construct an active sample with uploaded image attached
       const customSample: SampleLabel = {
         id: `upload-${Date.now()}`,
         brand: 'Field Capture Specimen',
-        commodity: `Uploaded Dossier: ${file.name.replace(/\.[^/.]+$/, '')}`,
+        commodity: `Uploaded Specimen: ${file.name.replace(/\.[^/.]+$/, '')}`,
+        imageUrl: dataUrl,
         netQtyDeclared: '750 mL',
         ean13: '8901099281740',
         packageType: 'Composite Sealed Container',
@@ -243,18 +307,16 @@ export const NewScanTerminal: React.FC<NewScanTerminalProps> = ({
         ],
       };
       handleRunAnalysis(customSample);
+    };
+
+    reader.readAsDataURL(file);
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      processFile(file);
     }
-  };
-
-  const cameraInputRef = useRef<HTMLInputElement>(null);
-
-  const toggleFlash = () => {
-    setTabletFlashOn(prev => !prev);
-    setLuminanceState(prev => (prev === 'WARNING' ? 'NORMAL' : 'WARNING'));
-  };
-
-  const retakeSteady = () => {
-    setBlurState(prev => (prev === 'REJECTED' ? 'PASSED' : 'REJECTED'));
   };
 
   return (
@@ -320,7 +382,43 @@ export const NewScanTerminal: React.FC<NewScanTerminalProps> = ({
       {/* Standard Terminal Content */}
       {terminalMode === 'standard' && (
         <>
-          {/* Primary Split Grid: Upload Target vs Samples */}
+          {/* Quick Pre-calibrated Benchmark Specimens Bar */}
+          <div className="bg-[#ffffff] rounded-xl border border-[#dce9ff] p-3 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className="flex items-center gap-2 text-xs font-semibold text-[#0b1c30]">
+              <span className="material-symbols-outlined text-[16px] text-[#006a61]">verified</span>
+              <span>Quick Test Benchmark Labels:</span>
+            </div>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {BENCHMARK_SAMPLES.map(sample => (
+                <button
+                  key={sample.id}
+                  onClick={() => {
+                    setUploadedFileName(null);
+                    setUploadedImageMeta(null);
+                    handleRunAnalysis(sample);
+                  }}
+                  className={`px-2.5 py-1 rounded text-[11px] font-medium transition-all flex items-center gap-1.5 border ${
+                    selectedSample?.id === sample.id
+                      ? 'bg-[#131b2e] text-white border-[#131b2e] shadow-xs'
+                      : 'bg-[#eff4ff] text-[#0b1c30] border-[#dce9ff] hover:bg-[#e5eeff]'
+                  }`}
+                >
+                  <span>{sample.commodity.split(' ')[0]}</span>
+                  <span
+                    className={`text-[9px] px-1 rounded ${
+                      sample.status === 'COMPLIANT'
+                        ? 'bg-[#86f2e4] text-[#00201d]'
+                        : 'bg-[#ffdad6] text-[#93000a]'
+                    }`}
+                  >
+                    {sample.status === 'COMPLIANT' ? 'PASS' : 'FAIL'}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Primary Split Grid: Upload Target vs Inspected Specimen */}
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
             {/* Upload Area */}
             <div className="lg:col-span-6 flex flex-col bg-[#ffffff] rounded-xl shadow-xs border border-[#dce9ff] p-4">
@@ -330,12 +428,11 @@ export const NewScanTerminal: React.FC<NewScanTerminalProps> = ({
                 onDrop={e => {
                   e.preventDefault();
                   const file = e.dataTransfer.files?.[0];
-                  if (file && fileInputRef.current) {
-                    fileInputRef.current.files = e.dataTransfer.files;
-                    handleFileUpload({ target: fileInputRef.current } as any);
+                  if (file) {
+                    processFile(file);
                   }
                 }}
-                className="relative group flex-1 min-h-[220px] flex flex-col items-center justify-center p-4 bg-[#eff4ff] border-2 border-dashed border-[#c6c6cd] hover:border-[#006a61] rounded-lg transition-all cursor-pointer"
+                className="relative group flex-1 min-h-[240px] flex flex-col items-center justify-center p-4 bg-[#eff4ff] border-2 border-dashed border-[#c6c6cd] hover:border-[#006a61] rounded-lg transition-all cursor-pointer"
                 onClick={() => fileInputRef.current?.click()}
               >
                 {/* Crosshairs */}
@@ -348,9 +445,16 @@ export const NewScanTerminal: React.FC<NewScanTerminalProps> = ({
                   <span className="material-symbols-outlined text-[24px] text-[#000000]">cloud_upload</span>
                 </div>
 
+                <div className="text-sm font-semibold text-[#0b1c30] text-center mb-1">
+                  {uploadedFileName ? 'Replace Specimen Image' : 'Drop package label here or browse'}
+                </div>
+                <p className="text-xs text-[#76777d] text-center mb-3">
+                  Supports JPG, PNG, WEBP, or live camera snapshot
+                </p>
+
                 {uploadedFileName && (
-                  <div className="text-sm text-[#0b1c30] text-center mb-3 font-semibold">
-                    {uploadedFileName}
+                  <div className="text-xs text-[#006a61] bg-[#dce9ff] px-2.5 py-1 rounded font-mono mb-3 font-semibold truncate max-w-[260px]">
+                    Current: {uploadedFileName}
                   </div>
                 )}
 
@@ -390,54 +494,145 @@ export const NewScanTerminal: React.FC<NewScanTerminalProps> = ({
               </div>
             </div>
 
-            {/* Inspected Specimen or Blank State */}
-            <div className="lg:col-span-6 flex flex-col bg-[#ffffff] rounded-xl shadow-xs border border-[#dce9ff] p-5">
-              {selectedSample ? (
-                <div className="flex flex-col justify-between h-full space-y-4">
+            {/* Inspected Specimen Display (Uploaded Image Section) */}
+            <div className="lg:col-span-6 flex flex-col bg-[#ffffff] rounded-xl shadow-xs border border-[#dce9ff] p-4">
+              {uploadedImageUrl || selectedSample ? (
+                <div className="flex flex-col justify-between h-full space-y-3">
                   <div>
-                    <div className="flex items-center justify-between pb-3 border-b border-[#eff4ff]">
-                      <span className="font-headline-sm text-sm font-bold text-[#0b1c30]">
-                        Active Specimen
-                      </span>
+                    {/* Header Bar */}
+                    <div className="flex items-center justify-between pb-2.5 border-b border-[#eff4ff]">
+                      <div className="flex items-center gap-2">
+                        <span className="font-headline-sm text-sm font-bold text-[#0b1c30]">
+                          {uploadedFileName ? 'Uploaded Specimen Image' : 'Active Specimen'}
+                        </span>
+                        {uploadedImageMeta && (
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-[#eff4ff] text-[#45464d] border border-[#dce9ff]">
+                            {uploadedImageMeta.size}
+                          </span>
+                        )}
+                      </div>
                       <span
-                        className={`px-2 py-0.5 rounded text-[11px] font-semibold ${
-                          selectedSample.status === 'COMPLIANT'
+                        className={`px-2 py-0.5 rounded text-[11px] font-semibold flex items-center gap-1.5 ${
+                          isAnalyzing
+                            ? 'bg-[#e5eeff] text-[#006a61]'
+                            : selectedSample?.status === 'COMPLIANT'
                             ? 'bg-[#86f2e4] text-[#00201d]'
                             : 'bg-[#ffdad6] text-[#93000a]'
                         }`}
                       >
-                        {selectedSample.status === 'COMPLIANT' ? 'Compliant' : 'Infraction Detected'}
+                        {isAnalyzing ? (
+                          <>
+                            <span className="w-1.5 h-1.5 rounded-full bg-[#006a61] animate-ping"></span>
+                            <span>Scanning OCR...</span>
+                          </>
+                        ) : selectedSample?.status === 'COMPLIANT' ? (
+                          'Compliant'
+                        ) : (
+                          'Infraction Detected'
+                        )}
                       </span>
                     </div>
 
-                    <div className="mt-3 space-y-2">
-                      <div className="text-base font-bold text-[#0b1c30]">
-                        {selectedSample.commodity}
-                      </div>
-                      <div className="text-xs text-[#45464d] flex items-center gap-2">
-                        <span>Net Qty: <strong className="text-[#0b1c30]">{selectedSample.netQtyDeclared}</strong></span>
-                        <span>•</span>
-                        <span>MRP: <strong className="text-[#0b1c30]">₹{selectedSample.mrp.toFixed(2)}</strong></span>
-                      </div>
-                      <div className="p-3 rounded-lg bg-[#eff4ff] border border-[#dce9ff] text-xs text-[#0b1c30]">
-                        {selectedSample.infractionSummary}
-                      </div>
+                    {/* Prominent Specimen Image Display */}
+                    <div className="relative mt-2.5 rounded-lg overflow-hidden border border-[#dce9ff] bg-[#f8f9ff] flex items-center justify-center min-h-[190px] max-h-[240px] p-2 group">
+                      {uploadedImageUrl ? (
+                        <img
+                          src={uploadedImageUrl}
+                          alt={selectedSample?.commodity || uploadedFileName || 'Specimen Label'}
+                          className="max-h-[220px] w-auto max-w-full object-contain rounded shadow-xs transition-transform group-hover:scale-[1.01]"
+                          referrerPolicy="no-referrer"
+                        />
+                      ) : selectedSample?.imageUrl ? (
+                        <img
+                          src={selectedSample.imageUrl}
+                          alt={selectedSample.commodity}
+                          className="max-h-[220px] w-auto max-w-full object-contain rounded shadow-xs transition-transform group-hover:scale-[1.01]"
+                          referrerPolicy="no-referrer"
+                        />
+                      ) : (
+                        <div className="flex flex-col items-center justify-center p-4 text-[#76777d]">
+                          <span className="material-symbols-outlined text-[32px] text-[#006a61]">receipt_long</span>
+                          <span className="text-xs font-medium mt-1">Package Label Loaded</span>
+                        </div>
+                      )}
+
+                      {/* Optical Laser Scanning Bar (Active while analyzing) */}
+                      {isAnalyzing && (
+                        <div className="absolute inset-0 pointer-events-none overflow-hidden rounded-lg">
+                          <div className="absolute inset-0 bg-[#006a61]/10"></div>
+                          <div className="absolute inset-x-0 h-1 bg-gradient-to-r from-transparent via-[#006a61] to-transparent shadow-[0_0_12px_#006a61] animate-laser-scan"></div>
+                          <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between px-3 py-1 rounded bg-black/80 text-white text-[10px] font-mono backdrop-blur-xs">
+                            <div className="flex items-center gap-1.5">
+                              <span className="w-2 h-2 rounded-full bg-[#86f2e4] animate-ping"></span>
+                              <span>OPTICAL SCAN: PDP NUMERAL HEIGHT MEASUREMENT</span>
+                            </div>
+                            <span className="text-[#86f2e4] font-bold">{pipelineProgress.toFixed(0)}%</span>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* File badge */}
+                      {uploadedFileName && !isAnalyzing && (
+                        <div className="absolute top-2 left-2 px-2 py-0.5 rounded bg-black/70 text-white text-[10px] font-mono flex items-center gap-1 backdrop-blur-xs">
+                          <span className="material-symbols-outlined text-[12px] text-[#86f2e4]">image</span>
+                          <span className="truncate max-w-[180px]">{uploadedFileName}</span>
+                        </div>
+                      )}
                     </div>
+
+                    {/* Specimen Particulars */}
+                    {selectedSample && (
+                      <div className="mt-2.5 space-y-1.5">
+                        <div className="text-sm font-bold text-[#0b1c30]">
+                          {selectedSample.commodity}
+                        </div>
+                        <div className="text-xs text-[#45464d] flex flex-wrap items-center gap-2">
+                          <span>Net Qty: <strong className="text-[#0b1c30] font-mono">{selectedSample.netQtyDeclared}</strong></span>
+                          <span>•</span>
+                          <span>MRP: <strong className="text-[#0b1c30] font-mono">₹{selectedSample.mrp.toFixed(2)}</strong></span>
+                          <span>•</span>
+                          <span>PDP: <strong className="text-[#0b1c30] font-mono">{selectedSample.pdpAreaCm2} cm²</strong></span>
+                        </div>
+                        <div
+                          className={`p-2 rounded-lg border text-xs ${
+                            selectedSample.status === 'COMPLIANT'
+                              ? 'bg-[#ecfdf5] border-[#a7f3d0] text-[#065f46]'
+                              : 'bg-[#eff4ff] border-[#dce9ff] text-[#0b1c30]'
+                          }`}
+                        >
+                          <div className="font-semibold text-[11px] mb-0.5">
+                            {selectedSample.status === 'COMPLIANT'
+                              ? 'Mandatory Declarations Verified:'
+                              : 'Statutory Verification Finding:'}
+                          </div>
+                          <div className="text-[11px]">{selectedSample.infractionSummary}</div>
+                        </div>
+                      </div>
+                    )}
                   </div>
 
-                  <div className="flex items-center justify-between pt-3 border-t border-[#eff4ff]">
-                    <button
-                      onClick={() => {
-                        setSelectedSample(null);
-                        setUploadedFileName(null);
-                      }}
-                      className="px-3 py-1.5 rounded-lg border border-[#c6c6cd] text-xs text-[#45464d] hover:text-[#0b1c30] transition-colors"
-                    >
-                      Clear
-                    </button>
+                  {/* Actions Footer */}
+                  <div className="flex items-center justify-between pt-2.5 border-t border-[#eff4ff]">
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={handleClearSpecimen}
+                        className="px-3 py-1.5 rounded-lg border border-[#c6c6cd] text-xs text-[#45464d] hover:text-[#ba1a1a] hover:border-[#ffdad6] hover:bg-[#fffbfa] transition-colors flex items-center gap-1"
+                      >
+                        <span className="material-symbols-outlined text-[14px]">delete</span>
+                        <span>Clear</span>
+                      </button>
+                      <button
+                        onClick={() => fileInputRef.current?.click()}
+                        className="px-3 py-1.5 rounded-lg border border-[#dce9ff] bg-[#eff4ff] text-xs text-[#0b1c30] hover:bg-[#e5eeff] transition-colors flex items-center gap-1"
+                      >
+                        <span className="material-symbols-outlined text-[14px]">sync</span>
+                        <span>Replace Image</span>
+                      </button>
+                    </div>
                     <button
                       onClick={() => setIsDossierOpen(true)}
-                      className="px-4 py-1.5 rounded-lg bg-[#000000] text-[#ffffff] text-xs font-medium hover:opacity-90 transition-opacity flex items-center gap-1.5"
+                      disabled={!selectedSample || isAnalyzing}
+                      className="px-4 py-1.5 rounded-lg bg-[#000000] text-[#ffffff] text-xs font-medium hover:opacity-90 disabled:opacity-50 transition-opacity flex items-center gap-1.5 shadow-xs"
                     >
                       <span className="material-symbols-outlined text-[16px]">visibility</span>
                       <span>Open Dossier</span>
@@ -445,7 +640,7 @@ export const NewScanTerminal: React.FC<NewScanTerminalProps> = ({
                   </div>
                 </div>
               ) : (
-                <div className="flex-1 min-h-[220px] flex flex-col items-center justify-center text-center p-6 rounded-lg border border-dashed border-[#dce9ff] bg-[#fafbff]">
+                <div className="flex-1 min-h-[240px] flex flex-col items-center justify-center text-center p-6 rounded-lg border border-dashed border-[#dce9ff] bg-[#fafbff]">
                   <div className="w-12 h-12 rounded-full bg-[#e5eeff] flex items-center justify-center mb-3 text-[#76777d]">
                     <span className="material-symbols-outlined text-[24px]">inbox</span>
                   </div>
@@ -453,114 +648,26 @@ export const NewScanTerminal: React.FC<NewScanTerminalProps> = ({
                     No Specimen Loaded
                   </div>
                   <p className="text-xs text-[#76777d] max-w-xs mt-1">
-                    Upload a package label file or use the camera to begin metrology inspection.
+                    Upload a package label file or use the camera to begin metrology inspection. The uploaded image will appear here.
                   </p>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Diagnostics Section */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {/* Blur */}
-            <div className="flex flex-col p-4 rounded-xl bg-white border border-[#dce9ff] shadow-xs">
-              <div className="flex items-center justify-between mb-3">
-                <span
-                  className={`px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 ${
-                    blurState === 'REJECTED'
-                      ? 'bg-[#ffdad6] text-[#93000a]'
-                      : 'bg-[#86f2e4] text-[#00201d]'
-                  }`}
-                >
-                  <span className="material-symbols-outlined text-[13px]">
-                    {blurState === 'REJECTED' ? 'cancel' : 'check_circle'}
-                  </span>
-                  <span>{blurState === 'REJECTED' ? 'Blur Detected' : 'Sharpness Optimal'}</span>
-                </span>
-                <button
-                  onClick={retakeSteady}
-                  className="px-3 py-1.5 rounded-lg bg-[#000000] text-[#ffffff] text-xs font-medium hover:opacity-90 transition-opacity flex items-center gap-1 shadow-xs"
-                >
-                  <span className="material-symbols-outlined text-[14px]">refresh</span>
-                  <span>{blurState === 'REJECTED' ? 'Retake Steady Photo' : 'Simulate Blur'}</span>
-                </button>
-              </div>
-
-              <div className="relative overflow-hidden rounded-lg bg-[#eff4ff] h-20 flex items-center justify-center border border-[#dce9ff]">
-                <div
-                  className={`absolute inset-0 flex items-center justify-center pointer-events-none transition-all ${
-                    blurState === 'REJECTED' ? 'opacity-40 blur-md' : 'opacity-80 blur-none'
-                  }`}
-                >
-                  <div className="flex flex-col items-center">
-                    <span className="text-sm font-bold text-[#0b1c30]">
-                      NET QTY 1000ml
-                    </span>
-                    <span className="text-[11px] text-[#45464d]">
-                      MRP ₹ 165.00 INCL. ALL TAXES
-                    </span>
+                  <div className="mt-4 flex items-center gap-2">
+                    <button
+                      onClick={() => fileInputRef.current?.click()}
+                      className="px-3.5 py-1.5 rounded-lg bg-[#000000] text-white text-xs font-medium hover:opacity-90 transition-opacity flex items-center gap-1.5 shadow-xs"
+                    >
+                      <span className="material-symbols-outlined text-[15px]">upload_file</span>
+                      <span>Upload Image</span>
+                    </button>
+                    <button
+                      onClick={() => cameraInputRef.current?.click()}
+                      className="px-3.5 py-1.5 rounded-lg border border-[#dce9ff] bg-[#eff4ff] text-[#0b1c30] text-xs font-medium hover:bg-[#e5eeff] transition-colors flex items-center gap-1.5"
+                    >
+                      <span className="material-symbols-outlined text-[15px] text-[#006a61]">photo_camera</span>
+                      <span>Camera</span>
+                    </button>
                   </div>
                 </div>
-
-                <div className="relative z-10 flex items-center gap-1.5 bg-white/90 px-3 py-1 rounded shadow-xs border border-[#dce9ff]">
-                  <span
-                    className={`text-xs font-semibold ${
-                      blurState === 'REJECTED' ? 'text-[#ba1a1a]' : 'text-[#006a61]'
-                    }`}
-                  >
-                    {blurState === 'REJECTED' ? 'Motion Blur' : 'Sharpness Verified'}
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* Lighting */}
-            <div className="flex flex-col p-4 rounded-xl bg-white border border-[#dce9ff] shadow-xs">
-              <div className="flex items-center justify-between mb-3">
-                <span
-                  className={`px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 ${
-                    luminanceState === 'WARNING'
-                      ? 'bg-[#fed7aa] text-[#9a3412]'
-                      : 'bg-[#86f2e4] text-[#00201d]'
-                  }`}
-                >
-                  <span className="material-symbols-outlined text-[13px]">
-                    {luminanceState === 'WARNING' ? 'warning' : 'check_circle'}
-                  </span>
-                  <span>{luminanceState === 'WARNING' ? 'Low Light / Shadow' : 'Lighting Optimal'}</span>
-                </span>
-                <button
-                  onClick={toggleFlash}
-                  className="px-3 py-1.5 rounded-lg bg-[#006a61] text-[#ffffff] text-xs font-medium hover:opacity-90 transition-opacity flex items-center gap-1 shadow-xs"
-                >
-                  <span className="material-symbols-outlined text-[14px]">
-                    {tabletFlashOn ? 'flash_off' : 'flash_on'}
-                  </span>
-                  <span>{tabletFlashOn ? 'Turn Off Flash' : 'Enable Flash'}</span>
-                </button>
-              </div>
-
-              <div className="relative overflow-hidden rounded-lg bg-[#eff4ff] h-20 flex items-center justify-center border border-[#dce9ff]">
-                <div
-                  className={`absolute inset-0 pointer-events-none transition-all ${
-                    tabletFlashOn
-                      ? 'bg-gradient-to-tr from-transparent via-white/10 to-transparent'
-                      : 'bg-gradient-to-tr from-black/60 via-transparent to-white/40'
-                  }`}
-                ></div>
-
-                <div className="relative z-10 flex items-center gap-1.5 bg-white/90 px-3 py-1 rounded shadow-xs border border-[#dce9ff]">
-                  <span
-                    className={`text-xs font-semibold ${
-                      luminanceState === 'WARNING' ? 'text-[#9a3412]' : 'text-[#006a61]'
-                    }`}
-                  >
-                    {luminanceState === 'WARNING'
-                      ? 'Shadow Detected'
-                      : 'Uniform Illumination'}
-                  </span>
-                </div>
-              </div>
+              )}
             </div>
           </div>
 
